@@ -1,0 +1,411 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Centipede Prototype</title>
+  <style>
+    :root {
+      color-scheme: dark;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      font-family: "Segoe UI", sans-serif;
+      background: radial-gradient(circle at top, #1c1d2e, #090a12 75%);
+      color: #f2f5ff;
+      overflow: hidden;
+    }
+
+    canvas {
+      display: block;
+      width: 100vw;
+      height: 100vh;
+      image-rendering: pixelated;
+    }
+
+    #hud {
+      position: fixed;
+      top: 1rem;
+      left: 50%;
+      transform: translateX(-50%);
+      padding: 0.75rem 1.5rem;
+      background: rgba(7, 9, 20, 0.7);
+      backdrop-filter: blur(6px);
+      border: 1px solid rgba(88, 120, 255, 0.3);
+      border-radius: 999px;
+      font-size: 0.95rem;
+      display: flex;
+      gap: 1.25rem;
+      align-items: center;
+      pointer-events: none;
+    }
+
+    #hud span {
+      white-space: nowrap;
+    }
+
+    #hud strong {
+      color: #84b5ff;
+      font-weight: 600;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="game" width="960" height="540"></canvas>
+  <div id="hud">
+    <span><strong>左右</strong>: 移動</span>
+    <span><strong>W / ↑</strong>: ジャンプ</span>
+    <span><strong>E</strong>: 強化 (オーブ取得後)</span>
+    <span><strong>R</strong>: リスタート</span>
+  </div>
+  <script>
+    const canvas = document.getElementById("game");
+    const ctx = canvas.getContext("2d");
+
+    const keys = new Map();
+
+    window.addEventListener("keydown", (event) => {
+      keys.set(event.key.toLowerCase(), true);
+      if (["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", " "].includes(event.key)) {
+        event.preventDefault();
+      }
+    });
+
+    window.addEventListener("keyup", (event) => {
+      keys.set(event.key.toLowerCase(), false);
+    });
+
+    const levelRects = [
+      { x: -600, y: 320, width: 1600, height: 200 },
+      { x: 250, y: 260, width: 140, height: 24 },
+      { x: 450, y: 210, width: 120, height: 24 },
+      { x: 680, y: 160, width: 140, height: 24 },
+      { x: 950, y: 220, width: 160, height: 24 },
+      { x: 1240, y: 180, width: 120, height: 24 },
+      { x: 1480, y: 140, width: 120, height: 24 },
+      { x: 1760, y: 200, width: 160, height: 24 },
+      { x: 2060, y: 260, width: 140, height: 24 },
+      { x: 2280, y: 310, width: 200, height: 24 },
+      { x: 2560, y: 260, width: 140, height: 24 },
+      { x: 2860, y: 220, width: 160, height: 24 },
+      { x: 3140, y: 180, width: 140, height: 24 },
+      { x: 3400, y: 140, width: 140, height: 24 },
+    ];
+
+    const upgradeOrbs = [
+      { x: 260, y: 210, collected: false },
+      { x: 960, y: 170, collected: false },
+      { x: 2060, y: 210, collected: false },
+      { x: 3140, y: 130, collected: false },
+    ];
+
+    const GRAVITY = 2200;
+    const MOVE_ACCEL = 2200;
+    const MAX_SPEED = 450;
+    const JUMP_FORCE = 850;
+    const AIR_CONTROL = 0.35;
+    const SEGMENT_DISTANCE = 26;
+    const SEGMENTS_PER_UPGRADE = 12;
+
+    const colors = {
+      ground: "#1f253c",
+      platform: "#283051",
+      orb: "#ffdc5e",
+      orbOutline: "#fde38d",
+      body: "#f572ff",
+      bodyGlow: "rgba(245, 114, 255, 0.16)",
+      head: "#ff91f6",
+      eye: "#0b1023",
+    };
+
+    const camera = { x: 0, y: 0 };
+
+    class Centipede {
+      constructor() {
+        this.reset();
+      }
+
+      reset() {
+        this.head = { x: -300, y: 200 };
+        this.velocity = { x: 0, y: 0 };
+        this.onGround = false;
+        this.upgradeLevel = 1;
+        this.targetSegments = this.upgradeLevel * SEGMENTS_PER_UPGRADE;
+        this.segments = [];
+        for (let i = 0; i < this.targetSegments; i++) {
+          this.segments.push({ x: this.head.x - i * SEGMENT_DISTANCE * 0.6, y: this.head.y });
+        }
+      }
+
+      tryUpgrade() {
+        this.upgradeLevel = Math.min(this.upgradeLevel + 1, upgradeOrbs.length + 1);
+        this.targetSegments = this.upgradeLevel * SEGMENTS_PER_UPGRADE;
+      }
+
+      addSegmentIfNeeded() {
+        while (this.segments.length < this.targetSegments) {
+          const tail = this.segments[this.segments.length - 1];
+          this.segments.push({ x: tail.x, y: tail.y });
+        }
+      }
+
+      update(dt) {
+        const left = keys.get("arrowleft") || keys.get("a");
+        const right = keys.get("arrowright") || keys.get("d");
+        const jumpPressed = keys.get("w") || keys.get("arrowup");
+
+        const accel = this.onGround ? MOVE_ACCEL : MOVE_ACCEL * AIR_CONTROL;
+
+        if (left) {
+          this.velocity.x -= accel * dt;
+        }
+        if (right) {
+          this.velocity.x += accel * dt;
+        }
+
+        if (!left && !right) {
+          const friction = this.onGround ? 1800 : 400;
+          if (this.velocity.x > 0) {
+            this.velocity.x = Math.max(0, this.velocity.x - friction * dt);
+          } else if (this.velocity.x < 0) {
+            this.velocity.x = Math.min(0, this.velocity.x + friction * dt);
+          }
+        }
+
+        this.velocity.x = Math.max(-MAX_SPEED, Math.min(MAX_SPEED, this.velocity.x));
+
+        this.velocity.y += GRAVITY * dt;
+
+        if (jumpPressed && this.onGround) {
+          this.velocity.y = -JUMP_FORCE;
+          this.onGround = false;
+        }
+
+        const prevX = this.head.x;
+        const prevY = this.head.y;
+
+        this.head.x += this.velocity.x * dt;
+        this.resolveCollisions("x");
+
+        this.head.y += this.velocity.y * dt;
+        this.resolveCollisions("y");
+
+        this.addSegmentIfNeeded();
+
+        this.segments[0].x = this.head.x;
+        this.segments[0].y = this.head.y;
+
+        for (let i = 1; i < this.segments.length; i++) {
+          const prev = this.segments[i - 1];
+          const current = this.segments[i];
+          const dx = current.x - prev.x;
+          const dy = current.y - prev.y;
+          const dist = Math.hypot(dx, dy) || 0.0001;
+          const ratio = SEGMENT_DISTANCE / dist;
+
+          if (dist > SEGMENT_DISTANCE) {
+            current.x = prev.x + dx * ratio;
+            current.y = prev.y + dy * ratio;
+          } else if (dist < SEGMENT_DISTANCE * 0.6) {
+            current.x = prev.x + dx * 0.6;
+            current.y = prev.y + dy * 0.6;
+          }
+        }
+
+        const tail = this.segments[this.segments.length - 1];
+        for (let i = this.segments.length - 1; i > 0; i--) {
+          const prev = this.segments[i - 1];
+          const current = this.segments[i];
+          const dx = current.x - prev.x;
+          const dy = current.y - prev.y;
+          const dist = Math.hypot(dx, dy) || 0.0001;
+          const ratio = SEGMENT_DISTANCE / dist;
+          current.x = prev.x + dx * ratio;
+          current.y = prev.y + dy * ratio;
+        }
+
+        this.segments[this.segments.length - 1].x = tail.x;
+        this.segments[this.segments.length - 1].y = tail.y;
+      }
+
+      resolveCollisions(axis) {
+        let onGround = false;
+        for (const rect of levelRects) {
+          if (axis === "x") {
+            if (this.head.y < rect.y + rect.height && this.head.y + 24 > rect.y) {
+              if (this.velocity.x > 0 && this.head.x + 20 > rect.x && this.head.x < rect.x) {
+                this.head.x = rect.x - 20;
+                this.velocity.x = 0;
+              } else if (this.velocity.x < 0 && this.head.x - 20 < rect.x + rect.width && this.head.x > rect.x + rect.width) {
+                this.head.x = rect.x + rect.width + 20;
+                this.velocity.x = 0;
+              }
+            }
+          } else {
+            if (this.head.x < rect.x + rect.width && this.head.x + 20 > rect.x) {
+              if (this.velocity.y > 0 && this.head.y + 20 > rect.y && this.head.y < rect.y) {
+                this.head.y = rect.y - 20;
+                this.velocity.y = 0;
+                onGround = true;
+              } else if (this.velocity.y < 0 && this.head.y - 20 < rect.y + rect.height && this.head.y > rect.y + rect.height) {
+                this.head.y = rect.y + rect.height + 20;
+                this.velocity.y = 0;
+              }
+            }
+          }
+        }
+        this.onGround = axis === "y" ? onGround : this.onGround;
+      }
+    }
+
+    const player = new Centipede();
+
+    let lastTime = performance.now();
+
+    function update(time) {
+      const dt = Math.min((time - lastTime) / 1000, 1 / 30);
+      lastTime = time;
+
+      if (keys.get("r")) {
+        player.reset();
+        for (const orb of upgradeOrbs) {
+          orb.collected = false;
+        }
+      }
+
+      player.update(dt);
+
+      for (const orb of upgradeOrbs) {
+        if (!orb.collected) {
+          const dx = player.head.x - orb.x;
+          const dy = player.head.y - orb.y;
+          if (Math.hypot(dx, dy) < 28) {
+            orb.collected = true;
+            orb.floatPhase = 0;
+            orb.collectedTime = time;
+            player.tryUpgrade();
+          }
+        }
+      }
+
+      if (keys.get("e")) {
+        player.tryUpgrade();
+      }
+
+      camera.x = player.head.x - canvas.width / 2;
+      camera.y = player.head.y - canvas.height / 2.2;
+
+      draw();
+      requestAnimationFrame(update);
+    }
+
+    function draw() {
+      ctx.save();
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      const gradient = ctx.createLinearGradient(0, 0, 0, canvas.height);
+      gradient.addColorStop(0, "#060713");
+      gradient.addColorStop(1, "#10142b");
+      ctx.fillStyle = gradient;
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+      ctx.save();
+      ctx.translate(-camera.x, -camera.y);
+
+      drawBackdrop();
+      drawLevel();
+      drawCollectibles();
+      drawPlayer();
+
+      ctx.restore();
+      ctx.restore();
+
+      drawOverlay();
+    }
+
+    function drawBackdrop() {
+      ctx.save();
+      ctx.fillStyle = "rgba(38, 45, 77, 0.4)";
+      for (let i = -20; i < 60; i++) {
+        const x = i * 260;
+        ctx.fillRect(x, 420, 120, 420);
+      }
+      ctx.restore();
+    }
+
+    function drawLevel() {
+      for (const rect of levelRects) {
+        ctx.fillStyle = rect.height > 100 ? colors.ground : colors.platform;
+        ctx.fillRect(rect.x, rect.y, rect.width, rect.height);
+      }
+    }
+
+    function drawCollectibles() {
+      for (const orb of upgradeOrbs) {
+        if (orb.collected) continue;
+        const pulse = Math.sin(performance.now() / 250 + orb.x) * 4;
+        ctx.beginPath();
+        ctx.fillStyle = colors.orb;
+        ctx.arc(orb.x, orb.y + pulse, 10, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.lineWidth = 2;
+        ctx.strokeStyle = colors.orbOutline;
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(orb.x, orb.y + pulse + 10);
+        ctx.lineTo(orb.x, orb.y + pulse + 24);
+        ctx.strokeStyle = "rgba(253, 227, 141, 0.4)";
+        ctx.stroke();
+      }
+    }
+
+    function drawPlayer() {
+      ctx.save();
+      ctx.shadowColor = colors.bodyGlow;
+      ctx.shadowBlur = 30;
+      ctx.lineWidth = 14;
+      ctx.lineCap = "round";
+      ctx.strokeStyle = colors.body;
+      ctx.beginPath();
+      const body = player.segments;
+      ctx.moveTo(body[0].x, body[0].y);
+      for (let i = 1; i < body.length; i++) {
+        ctx.lineTo(body[i].x, body[i].y);
+      }
+      ctx.stroke();
+
+      ctx.shadowBlur = 0;
+      ctx.fillStyle = colors.head;
+      ctx.beginPath();
+      ctx.arc(player.head.x, player.head.y, 18, 0, Math.PI * 2);
+      ctx.fill();
+
+      const eyeOffsetX = player.velocity.x * 0.02;
+      const eyeOffsetY = Math.min(6, Math.max(-6, player.velocity.y * 0.01));
+      ctx.fillStyle = colors.eye;
+      ctx.beginPath();
+      ctx.arc(player.head.x + eyeOffsetX, player.head.y + eyeOffsetY, 5, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    }
+
+    function drawOverlay() {
+      const hud = document.getElementById("hud");
+      hud.innerHTML = `
+        <span><strong>左右</strong>: 移動</span>
+        <span><strong>W / ↑</strong>: ジャンプ</span>
+        <span><strong>E</strong>: 強化 (オーブ取得後)</span>
+        <span><strong>R</strong>: リスタート</span>
+        <span><strong>段数</strong>: ${player.upgradeLevel} 等身 / セグメント ${player.segments.length}</span>
+      `;
+    }
+
+    requestAnimationFrame(update);
+  </script>
+</body>
+</html>
