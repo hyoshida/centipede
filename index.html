@@ -111,6 +111,11 @@
     const AIR_CONTROL = 0.35;
     const SEGMENT_DISTANCE = 26;
     const SEGMENTS_PER_UPGRADE = 12;
+    const SEGMENT_RADIUS = 12;
+    const FLOAT_TARGET_HEIGHT = 120;
+    const FLOAT_SPRING = 18;
+    const FLOAT_MAX_ASCEND_SPEED = 520;
+    const FLOAT_FALL_DAMPING = 0.3;
 
     const colors = {
       ground: "#1f253c",
@@ -137,6 +142,8 @@
         this.upgradeLevel = 1;
         this.targetSegments = this.upgradeLevel * SEGMENTS_PER_UPGRADE;
         this.segments = [];
+        this.anchorSegmentIndex = -1;
+        this.floatActive = false;
         for (let i = 0; i < this.targetSegments; i++) {
           this.segments.push({ x: this.head.x - i * SEGMENT_DISTANCE * 0.6, y: this.head.y });
         }
@@ -158,6 +165,7 @@
         const left = keys.get("arrowleft") || keys.get("a");
         const right = keys.get("arrowright") || keys.get("d");
         const jumpPressed = keys.get("w") || keys.get("arrowup");
+        const floatHeld = keys.get("shift") || keys.get("s") || keys.get("arrowdown");
 
         const accel = this.onGround ? MOVE_ACCEL : MOVE_ACCEL * AIR_CONTROL;
 
@@ -231,6 +239,22 @@
 
         this.segments[this.segments.length - 1].x = tail.x;
         this.segments[this.segments.length - 1].y = tail.y;
+
+        this.resolveSegmentGrounding();
+
+        if (floatHeld && this.anchorSegmentIndex !== -1) {
+          const anchor = this.segments[this.anchorSegmentIndex];
+          const targetHeight = anchor.y - FLOAT_TARGET_HEIGHT;
+          const heightDelta = targetHeight - this.head.y;
+          this.velocity.y += heightDelta * FLOAT_SPRING * dt;
+          if (this.velocity.y > 0) {
+            this.velocity.y *= FLOAT_FALL_DAMPING;
+          }
+          this.velocity.y = Math.max(this.velocity.y, -FLOAT_MAX_ASCEND_SPEED);
+          this.floatActive = true;
+        } else {
+          this.floatActive = false;
+        }
       }
 
       resolveCollisions(axis) {
@@ -260,6 +284,38 @@
           }
         }
         this.onGround = axis === "y" ? onGround : this.onGround;
+      }
+
+      resolveSegmentGrounding() {
+        this.anchorSegmentIndex = -1;
+        for (let i = 1; i < this.segments.length; i++) {
+          const segment = this.segments[i];
+          segment.onGround = false;
+          for (const rect of levelRects) {
+            const rectTop = rect.y;
+            const rectBottom = rect.y + rect.height;
+            const rectLeft = rect.x;
+            const rectRight = rect.x + rect.width;
+            const withinHorizontal =
+              segment.x + SEGMENT_RADIUS > rectLeft && segment.x - SEGMENT_RADIUS < rectRight;
+
+            if (!withinHorizontal) continue;
+
+            if (segment.y + SEGMENT_RADIUS > rectTop && segment.y <= rectTop) {
+              segment.y = rectTop - SEGMENT_RADIUS;
+              segment.onGround = true;
+              if (this.anchorSegmentIndex === -1 || i < this.anchorSegmentIndex) {
+                this.anchorSegmentIndex = i;
+              }
+              break;
+            }
+
+            if (segment.y - SEGMENT_RADIUS < rectBottom && segment.y >= rectBottom) {
+              segment.y = rectBottom + SEGMENT_RADIUS;
+              break;
+            }
+          }
+        }
       }
     }
 
@@ -400,6 +456,7 @@
         <span><strong>左右</strong>: 移動</span>
         <span><strong>W / ↑</strong>: ジャンプ</span>
         <span><strong>E</strong>: 強化 (オーブ取得後)</span>
+        <span><strong>Shift / S / ↓</strong>: 浮遊 (接地時)</span>
         <span><strong>R</strong>: リスタート</span>
         <span><strong>段数</strong>: ${player.upgradeLevel} 等身 / セグメント ${player.segments.length}</span>
       `;
