@@ -4,6 +4,14 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Centipede Prototype</title>
+  <script src="/path/to/GameAnalytics.min.js" />
+  <!-- GameAnalytics -->
+  <script>
+    (function(w,d,a,m){var s='script';var g='GameAnalytics';w[g]=w[g]||function(){(w[g].q=w[g].q||[]).push(arguments)},a=d.createElement(s),m=d.getElementsByTagName(s)[0];a.async=1;a.src='http://download.gameanalytics.com/js/GameAnalytics-[VERSION].min.js';m.parentNode.insertBefore(a,m)})(window,document);
+    GameAnalytics("setEnabledInfoLog", true);
+    GameAnalytics("initialize", "ad7d5093e37559e1b0a0671b5c5c2b38", "68acc4264d1157ede89a44f72fff148679e7e47e");
+  </script>
+  <!-- End GameAnalytics -->
   <style>
     :root {
       color-scheme: dark;
