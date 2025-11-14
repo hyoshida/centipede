@@ -34,6 +34,7 @@
       width: 100vw;
       height: 100vh;
       image-rendering: pixelated;
+      touch-action: none;
     }
 
     #hud {
@@ -61,6 +62,72 @@
       color: #84b5ff;
       font-weight: 600;
     }
+
+    #touch-controls {
+      position: fixed;
+      inset: auto 0 1.5rem;
+      display: none;
+      justify-content: space-between;
+      padding: 0 1.5rem;
+      pointer-events: none;
+      gap: 2rem;
+    }
+
+    #touch-controls .touch-group {
+      display: flex;
+      gap: 0.75rem;
+      pointer-events: auto;
+    }
+
+    #touch-controls button {
+      min-width: 3.25rem;
+      min-height: 3.25rem;
+      padding: 0.75rem 1rem;
+      border-radius: 1rem;
+      border: 1px solid rgba(132, 181, 255, 0.4);
+      background: rgba(9, 12, 26, 0.75);
+      color: #f2f5ff;
+      font-size: 0.9rem;
+      font-weight: 600;
+      letter-spacing: 0.02em;
+      text-transform: uppercase;
+      box-shadow: 0 10px 30px rgba(12, 18, 36, 0.45);
+      backdrop-filter: blur(6px);
+      touch-action: none;
+      transition: background 0.2s ease, transform 0.2s ease;
+    }
+
+    #touch-controls button:active,
+    #touch-controls button.active {
+      background: rgba(24, 54, 112, 0.9);
+      transform: translateY(2px);
+    }
+
+    @media (max-width: 768px) {
+      #hud {
+        top: 0.75rem;
+        padding: 0.5rem 1rem;
+        gap: 0.75rem;
+        font-size: 0.8rem;
+        flex-wrap: wrap;
+        justify-content: center;
+        max-width: min(90vw, 640px);
+      }
+
+      #hud span {
+        white-space: normal;
+      }
+    }
+
+    @media (pointer: coarse) {
+      #hud {
+        max-width: min(92vw, 520px);
+      }
+
+      #touch-controls {
+        display: flex;
+      }
+    }
   </style>
 </head>
 <body>
@@ -71,11 +138,30 @@
     <span><strong>E</strong>: 強化 (オーブ取得後)</span>
     <span><strong>R</strong>: リスタート</span>
   </div>
+  <div id="touch-controls" aria-hidden="true">
+    <div class="touch-group">
+      <button type="button" data-key="arrowleft">◀</button>
+      <button type="button" data-key="arrowright">▶</button>
+    </div>
+    <div class="touch-group">
+      <button type="button" data-key="arrowup">ジャンプ</button>
+      <button type="button" data-key="shift">浮遊</button>
+      <button type="button" data-key="e">強化</button>
+    </div>
+  </div>
   <script>
     const canvas = document.getElementById("game");
     const ctx = canvas.getContext("2d");
 
     const keys = new Map();
+
+    function resizeCanvas() {
+      canvas.width = window.innerWidth;
+      canvas.height = window.innerHeight;
+    }
+
+    window.addEventListener("resize", resizeCanvas);
+    resizeCanvas();
 
     window.addEventListener("keydown", (event) => {
       keys.set(event.key.toLowerCase(), true);
@@ -86,6 +172,97 @@
 
     window.addEventListener("keyup", (event) => {
       keys.set(event.key.toLowerCase(), false);
+    });
+
+    const touchControls = document.getElementById("touch-controls");
+    const pointerKeyMap = new Map();
+    const keyPressCounts = new Map();
+    const keyButtons = new Map();
+
+    function pressVirtualKey(key, pointerId) {
+      pointerKeyMap.set(pointerId, key);
+      keyPressCounts.set(key, (keyPressCounts.get(key) || 0) + 1);
+      keys.set(key, true);
+      const button = keyButtons.get(key);
+      if (button) {
+        button.classList.add("active");
+        if (button.setPointerCapture) {
+          button.setPointerCapture(pointerId);
+        }
+      }
+    }
+
+    function releaseVirtualKey(pointerId) {
+      const key = pointerKeyMap.get(pointerId);
+      if (!key) {
+        return;
+      }
+
+      pointerKeyMap.delete(pointerId);
+      const remaining = (keyPressCounts.get(key) || 0) - 1;
+      const button = keyButtons.get(key);
+      if (button && button.hasPointerCapture && button.hasPointerCapture(pointerId)) {
+        button.releasePointerCapture(pointerId);
+      }
+
+      if (remaining <= 0) {
+        keyPressCounts.delete(key);
+        keys.set(key, false);
+        if (button) {
+          button.classList.remove("active");
+        }
+      } else {
+        keyPressCounts.set(key, remaining);
+      }
+    }
+
+    function bindTouchButton(button, key) {
+      keyButtons.set(key, button);
+
+      const handlePress = (event) => {
+        if (event.pointerType === "mouse") {
+          return;
+        }
+        event.preventDefault();
+        pressVirtualKey(key, event.pointerId);
+      };
+
+      const handleRelease = (event) => {
+        if (event.pointerType === "mouse") {
+          return;
+        }
+        event.preventDefault();
+        releaseVirtualKey(event.pointerId);
+      };
+
+      button.addEventListener("pointerdown", handlePress, { passive: false });
+      button.addEventListener("pointerup", handleRelease, { passive: false });
+      button.addEventListener("pointercancel", handleRelease, { passive: false });
+      button.addEventListener("pointerout", handleRelease, { passive: false });
+    }
+
+    if (touchControls) {
+      const touchButtons = touchControls.querySelectorAll("button[data-key]");
+      touchButtons.forEach((button) => {
+        const key = button.dataset.key?.toLowerCase();
+        if (key) {
+          bindTouchButton(button, key);
+        }
+      });
+    }
+
+    window.addEventListener("pointerup", (event) => {
+      if (event.pointerType === "mouse") {
+        return;
+      }
+      releaseVirtualKey(event.pointerId);
+    });
+
+    window.addEventListener("pointercancel", (event) => {
+      if (event.pointerType === "mouse") {
+        return;
+      }
+      releaseVirtualKey(event.pointerId);
     });
 
     const levelRects = [
